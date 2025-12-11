@@ -9,7 +9,7 @@ import helmet from "helmet";
 // 🔹 Import routes
 import authRoutes from "./routes/authRoutes.js";
 import protectedRoutes from "./routes/protectedRoutes.js";
-import recipeRoutes from "./recipeRoutes.js";
+import recipeRoutes from "./routes/recipeRoutes.js";   // ✔ แก้ path ที่ถูกต้อง
 import savedRecipesRoutes from "./routes/savedRecipes.js";
 
 dotenv.config();
@@ -27,18 +27,14 @@ const FRONTEND_RENDER = "https://what-will-you-cook-frontend.onrender.com";
 const allowedOrigins = [
   "http://localhost:3000",
   FRONTEND_RENDER,
-  process.env.FRONTEND_URL, // ใช้ได้เผื่อไว้ (ถ้ามี)
+  process.env.FRONTEND_URL, // optional
 ].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // อนุญาตกรณี Postman / curl (ไม่มี origin)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+      if (!origin) return callback(null, true); // Postman/curl ok
+      if (allowedOrigins.includes(origin)) return callback(null, true);
 
       console.log("❌ CORS blocked:", origin);
       return callback(new Error("Not allowed by CORS"));
@@ -47,10 +43,10 @@ app.use(
   })
 );
 
-/* ----------------- Middleware ทั่วไป ----------------- */
+/* ----------------- Middleware ----------------- */
 app.use(express.json());
 
-/* ----------------- Login / Auth Rate Limit ----------------- */
+/* ----------------- Rate Limit ----------------- */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -63,22 +59,17 @@ app.use("/api/protected", protectedRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/saved-recipes", savedRecipesRoutes);
 
-// Test route
 app.get("/", (req, res) => {
   res.send("🍳 What Will You Cook Backend is running!");
 });
 
 /* ----------------- Connect MongoDB ----------------- */
-if (!process.env.MONGO_URI) {
-  console.error("❌ MONGO_URI is not set in .env");
-} else {
-  mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB connected"))
-    .catch((err) => console.error("❌ MongoDB error:", err));
-}
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((err) => console.error("❌ MongoDB error:", err));
 
-/* ----------------- Global error handler ----------------- */
+/* ----------------- Global Error Handler ----------------- */
 app.use((err, req, res, next) => {
   console.error("Global error:", err);
   res.status(err.status || 500).json({
