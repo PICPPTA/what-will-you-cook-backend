@@ -9,7 +9,7 @@ import helmet from "helmet";
 // 🔹 Import routes
 import authRoutes from "./routes/authRoutes.js";
 import protectedRoutes from "./routes/protectedRoutes.js";
-import recipeRoutes from "./routes/recipeRoutes.js";
+import recipeRoutes from "./recipeRoutes.js";
 import savedRecipesRoutes from "./routes/savedRecipes.js";
 
 dotenv.config();
@@ -19,22 +19,31 @@ const app = express();
 /* ----------------- Security: Helmet ----------------- */
 app.use(helmet());
 
-/* ----------------- CORS ตั้งแบบปลอดภัยขึ้น ----------------- */
-// origin ที่อนุญาต (เพิ่ม FRONTEND_URL ใน .env ได้เช่น https://whatwillucook.com)
+/* ----------------- CORS ตั้งค่าแบบอนุญาต Frontend จริง ----------------- */
+
+// ใส่ frontend ของคุณลงไปตรงนี้ (Render URL)
+const FRONTEND_RENDER = "https://what-will-you-cook-frontend.onrender.com";
+
 const allowedOrigins = [
   "http://localhost:3000",
-  process.env.FRONTEND_URL, // เช่น https://whatwillucook.com
+  FRONTEND_RENDER,
+  process.env.FRONTEND_URL, // ใช้ได้เผื่อไว้ (ถ้ามี)
 ].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // อนุญาตทั้ง frontend จริง กับ request แบบไม่มี origin (เช่น Postman / curl)
-      if (!origin || allowedOrigins.includes(origin)) {
+      // อนุญาตกรณี Postman / curl (ไม่มี origin)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+
+      console.log("❌ CORS blocked:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
+    credentials: true,
   })
 );
 
@@ -42,17 +51,14 @@ app.use(
 app.use(express.json());
 
 /* ----------------- Login / Auth Rate Limit ----------------- */
-// กันยิง auth รัว ๆ (login/register/me)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 นาที
-  max: 30,                  // IP เดิมลองได้ 30 ครั้ง/15 นาที
+  windowMs: 15 * 60 * 1000,
+  max: 30,
   message: { message: "Too many auth requests, please try again later." },
 });
 
 /* ----------------- Routes ----------------- */
-// ครอบ limiter เฉพาะกลุ่ม /api/auth
 app.use("/api/auth", authLimiter, authRoutes);
-
 app.use("/api/protected", protectedRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/saved-recipes", savedRecipesRoutes);
@@ -72,11 +78,10 @@ if (!process.env.MONGO_URI) {
     .catch((err) => console.error("❌ MongoDB error:", err));
 }
 
-/* ----------------- Global error handler (เผื่ออนาคต) ----------------- */
+/* ----------------- Global error handler ----------------- */
 app.use((err, req, res, next) => {
   console.error("Global error:", err);
-  const status = err.status || 500;
-  res.status(status).json({
+  res.status(err.status || 500).json({
     message: err.message || "Server error",
   });
 });
