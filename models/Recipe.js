@@ -23,11 +23,25 @@ const recipeSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     description: String,
-    imageUrl: String, // URL รูปอาหาร
-    ingredients: [{ type: String, required: true }],
-    steps: String,
+
+    imageUrl: {
+      type: String,
+      default: "https://via.placeholder.com/600x400?text=No+Image",
+    },
+
+    // normalize ingredients → lowercase เพื่อให้ search ตรงเสมอ
+    ingredients: [
+      {
+        type: String,
+        required: true,
+        set: (v) => v.toLowerCase(),
+      },
+    ],
+
+    steps: String, // optionally convert to array
+
     cookingTime: Number,
-    // 🟢 คนสร้างเมนู
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
     ratings: [ratingSchema],
