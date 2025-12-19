@@ -1,100 +1,78 @@
 // backend/routes/savedRecipes.js
 import express from "express";
+import mongoose from "mongoose";
 import SavedRecipe from "../models/SavedRecipe.js";
 import Recipe from "../models/Recipe.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import rateLimit from "express-rate-limit";
 
 const router = express.Router();
 
-/**
- * POST /api/saved-recipes
- * บันทึกเมนูที่ user เซฟ (idempotent – เซฟซ้ำไม่ error)
- */
-router.post("/", authMiddleware, async (req, res) => {
+/* ------------------- Rate Limit ------------------- */
+const saveLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 นาที
+  max: 30,
+  message: { message: "Too many save actions, please slow down." },
+});
+
+/* ------------------- Helper ------------------- */
+function getUserId(req) {
+  return req.user?.id; // ใช้เพียง id เดียว — ปลอดภัยสุด
+}
+
+function validateObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
+}
+
+/* ------------------- POST: Save Recipe ------------------- */
+router.post("/", authMiddleware, saveLimiter, async (req, res) => {
   try {
-    const userId = req.user?.userId || req.user?.id || req.user?._id;
-
-    if (!userId) {
-      return res.status(401).json({ message: "User not found in token" });
-    }
-
+    const userId = getUserId(req);
     const { recipeId } = req.body;
 
-    if (!recipeId) {
-      return res.status(400).json({ message: "recipeId is required" });
-    }
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!recipeId || !validateObjectId(recipeId))
+      return res.status(400).json({ message: "Invalid recipeId" });
 
-    // ตรวจสอบว่า recipe มีจริงไหม
     const recipe = await Recipe.findById(recipeId);
-    if (!recipe) {
-      return res.status(404).json({ message: "Recipe not found" });
-    }
+    if (!recipe) return res.status(404).json({ message: "Recipe not found" });
 
-    // กันไม่ให้เซฟซ้ำ
     let saved = await SavedRecipe.findOne({ user: userId, recipe: recipeId });
     if (!saved) {
-      saved = await SavedRecipe.create({
-        user: userId,
-        recipe: recipeId,
-      });
+      saved = await SavedRecipe.create({ user: userId, recipe: recipeId });
     }
 
-    return res.json({
-      message: "Recipe saved",
-      savedId: saved._id,
-    });
+    return res.json({ message: "Recipe saved", savedId: saved._id });
   } catch (err) {
     console.error("Save recipe error:", err);
-    if (err.code === 11000) {
+    if (err.code === 11000)
       return res.status(200).json({ message: "Already saved" });
-    }
+
     res.status(500).json({ message: "Server error" });
   }
 });
 
-/**
- * ✅ NEW: POST /api/saved-recipes/:recipeId/toggle
- * - ถ้ายังไม่เซฟ → เซฟให้
- * - ถ้าเซฟแล้ว → ยกเลิกการเซฟ
- */
-router.post("/:recipeId/toggle", authMiddleware, async (req, res) => {
+/* ------------------- POST: Toggle Save ------------------- */
+router.post("/:recipeId/toggle", authMiddleware, saveLimiter, async (req, res) => {
   try {
-    const userId = req.user?.userId || req.user?.id || req.user?._id;
+    const userId = getUserId(req);
     const { recipeId } = req.params;
 
-    if (!userId) {
-      return res.status(401).json({ message: "User not found in token" });
-    }
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!validateObjectId(recipeId))
+      return res.status(400).json({ message: "Invalid recipeId" });
 
-    if (!recipeId) {
-      return res.status(400).json({ message: "recipeId is required" });
-    }
-
-    // ตรวจสอบว่า recipe มีจริงไหม
     const recipe = await Recipe.findById(recipeId);
-    if (!recipe) {
-      return res.status(404).json({ message: "Recipe not found" });
-    }
+    if (!recipe) return res.status(404).json({ message: "Recipe not found" });
 
-    const existing = await SavedRecipe.findOne({
-      user: userId,
-      recipe: recipeId,
-    });
+    const existing = await SavedRecipe.findOne({ user: userId, recipe: recipeId });
 
     if (existing) {
-      // เคยเซฟแล้ว → ลบออก
       await existing.deleteOne();
-      return res.json({
-        message: "Removed from saved recipes",
-        saved: false,
-      });
+      return res.json({ message: "Removed from saved recipes", saved: false });
     }
 
-    // ยังไม่เซฟ → สร้างใหม่
-    const created = await SavedRecipe.create({
-      user: userId,
-      recipe: recipeId,
-    });
+    const created = await SavedRecipe.create({ user: userId, recipe: recipeId });
 
     return res.json({
       message: "Recipe saved",
@@ -107,53 +85,38 @@ router.post("/:recipeId/toggle", authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * GET /api/saved-recipes
- * ดึงเมนูทั้งหมดที่ user เซฟ
- */
+/* ------------------- GET: All Saved Recipes ------------------- */
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const userId = req.user?.userId || req.user?.id || req.user?._id;
-
-    if (!userId) {
-      return res.status(401).json({ message: "User not found in token" });
-    }
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const saved = await SavedRecipe.find({ user: userId })
       .sort({ createdAt: -1 })
-      .populate("recipe"); // ดึงข้อมูลเมนูเต็ม ๆ
+      .populate("recipe", "name ingredients"); // เลือกเฉพาะ field ที่จำเป็น
 
-    const recipes = saved
-      .map((doc) => doc.recipe)
-      .filter(Boolean); // กัน null เผื่อมี recipe ถูกลบไปแล้ว
+    const recipes = saved.map((doc) => doc.recipe).filter(Boolean);
 
-    res.json({
-      count: recipes.length,
-      recipes,
-    });
+    res.json({ count: recipes.length, recipes });
   } catch (err) {
     console.error("Get saved recipes error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-/**
- * DELETE /api/saved-recipes/:id
- * ยกเลิกการเซฟเมนูจาก _id ของ SavedRecipe (OPTIONAL ใช้ทีหลังก็ได้)
- */
+/* ------------------- DELETE ------------------- */
 router.delete("/:id", authMiddleware, async (req, res) => {
   try {
-    const userId = req.user?.userId || req.user?.id || req.user?._id;
+    const userId = getUserId(req);
     const { id } = req.params;
 
-    const doc = await SavedRecipe.findOneAndDelete({
-      _id: id,
-      user: userId,
-    });
+    if (!validateObjectId(id))
+      return res.status(400).json({ message: "Invalid id" });
 
-    if (!doc) {
+    const doc = await SavedRecipe.findOneAndDelete({ _id: id, user: userId });
+
+    if (!doc)
       return res.status(404).json({ message: "Saved recipe not found" });
-    }
 
     res.json({ message: "Removed from saved recipes" });
   } catch (err) {
