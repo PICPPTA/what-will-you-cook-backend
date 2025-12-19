@@ -1,4 +1,3 @@
-// backend/routes/savedRecipes.js (improved)
 import express from "express";
 import mongoose from "mongoose";
 import SavedRecipe from "../models/SavedRecipe.js";
@@ -18,7 +17,7 @@ const saveLimiter = rateLimit({
 /* ------------------- Helpers ------------------- */
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-// ✅ Protect all routes in this router (cookie-based auth)
+/* ------------------- Protect all routes ------------------- */
 router.use(requireAuth);
 
 /* ------------------- POST: Save Recipe ------------------- */
@@ -44,7 +43,6 @@ router.post("/", saveLimiter, async (req, res) => {
   } catch (err) {
     console.error("Save recipe error:", err);
 
-    // In case of rare race condition despite upsert
     if (err?.code === 11000) {
       return res.status(200).json({ message: "Already saved" });
     }
@@ -83,7 +81,6 @@ router.post("/:recipeId/toggle", saveLimiter, async (req, res) => {
   } catch (err) {
     console.error("Toggle saved recipe error:", err);
 
-    // If unique index hits during concurrency, treat as saved
     if (err?.code === 11000) {
       const doc = await SavedRecipe.findOne({
         user: req.user.id,
@@ -107,7 +104,7 @@ router.get("/", async (req, res) => {
 
     const saved = await SavedRecipe.find({ user: userId })
       .sort({ createdAt: -1 })
-      .populate("recipe", "name ingredients imageUrl"); // keep minimal fields
+      .populate("recipe", "name ingredients imageUrl");
 
     const recipes = saved.map((doc) => doc.recipe).filter(Boolean);
 
@@ -119,4 +116,26 @@ router.get("/", async (req, res) => {
 });
 
 /* ------------------- DELETE: Remove saved item by SavedRecipe _id ------------------- */
-router.delete("/:id", async
+router.delete("/:id", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    if (!isObjectId(id)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
+
+    const doc = await SavedRecipe.findOneAndDelete({ _id: id, user: userId });
+
+    if (!doc) {
+      return res.status(404).json({ message: "Saved recipe not found" });
+    }
+
+    return res.json({ message: "Removed from saved recipes" });
+  } catch (err) {
+    console.error("Delete saved recipe error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+export default router;
