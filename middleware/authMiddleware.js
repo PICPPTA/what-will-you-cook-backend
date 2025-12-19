@@ -2,37 +2,31 @@
 import jwt from "jsonwebtoken";
 
 export default function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization || req.headers["authorization"];
+  const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    return res.status(401).json({ message: "No token provided" });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Missing or invalid authorization header" });
   }
 
-  // รองรับทั้งรูปแบบ "Bearer xxx" และส่งมาเป็น token ตรง ๆ
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : authHeader;
+  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // เผื่อกรณีเก่าที่ใช้ userId แทน id
-    const id = decoded.id || decoded.userId;
-
-    req.user = {
-      id,
-      email: decoded.email,
-      name: decoded.name,
-    };
-
-    if (!req.user.id) {
-      // ถ้าไม่มี id เลย ให้ถือว่า token ไม่ถูกต้อง
+    if (!decoded.id && !decoded.userId) {
       return res.status(401).json({ message: "Invalid token payload" });
     }
 
+    req.user = {
+      id: decoded.id || decoded.userId,
+      email: decoded.email,
+      name: decoded.name,
+      role: decoded.role ?? "user",
+    };
+
     next();
   } catch (err) {
-    console.error("authMiddleware error:", err);
-    return res.status(401).json({ message: "Invalid token" });
+    console.error("JWT verify failed:", err);
+    return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
