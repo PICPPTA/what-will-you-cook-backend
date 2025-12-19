@@ -1,14 +1,19 @@
-// backend/middleware/authMiddleware.js
 import jwt from "jsonwebtoken";
 
 export default function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
+  const authHeader = req.headers.authorization || req.headers.Authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Missing or invalid authorization header" });
+  if (!authHeader) {
+    return res.status(401).json({ message: "Missing authorization header" });
   }
 
-  const token = authHeader.split(" ")[1];
+  // รองรับ: Bearer xxx, bearer xxx, BEARER xxx
+  const parts = authHeader.split(" ");
+  if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
+    return res.status(401).json({ message: "Invalid authorization format" });
+  }
+
+  const token = parts[1];
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
