@@ -3,34 +3,32 @@ import express from "express";
 import mongoose from "mongoose";
 import SavedRecipe from "../models/SavedRecipe.js";
 import Recipe from "../models/Recipe.js";
-import authMiddleware from "../middleware/authMiddleware.js";
+import requireAuth from "../middleware/requireAuth.js"; // ✅ change
 import rateLimit from "express-rate-limit";
 
 const router = express.Router();
 
 /* ------------------- Rate Limit ------------------- */
 const saveLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 นาที
+  windowMs: 60 * 1000,
   max: 30,
   message: { message: "Too many save actions, please slow down." },
 });
 
 /* ------------------- Helper ------------------- */
 function getUserId(req) {
-  return req.user?.id; // ใช้เพียง id เดียว — ปลอดภัยสุด
+  return req.user?.id;
 }
-
 function validateObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
 }
 
 /* ------------------- POST: Save Recipe ------------------- */
-router.post("/", authMiddleware, saveLimiter, async (req, res) => {
+router.post("/", requireAuth, saveLimiter, async (req, res) => {
   try {
     const userId = getUserId(req);
     const { recipeId } = req.body;
 
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
     if (!recipeId || !validateObjectId(recipeId))
       return res.status(400).json({ message: "Invalid recipeId" });
 
@@ -53,12 +51,11 @@ router.post("/", authMiddleware, saveLimiter, async (req, res) => {
 });
 
 /* ------------------- POST: Toggle Save ------------------- */
-router.post("/:recipeId/toggle", authMiddleware, saveLimiter, async (req, res) => {
+router.post("/:recipeId/toggle", requireAuth, saveLimiter, async (req, res) => {
   try {
     const userId = getUserId(req);
     const { recipeId } = req.params;
 
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
     if (!validateObjectId(recipeId))
       return res.status(400).json({ message: "Invalid recipeId" });
 
@@ -86,14 +83,13 @@ router.post("/:recipeId/toggle", authMiddleware, saveLimiter, async (req, res) =
 });
 
 /* ------------------- GET: All Saved Recipes ------------------- */
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const saved = await SavedRecipe.find({ user: userId })
       .sort({ createdAt: -1 })
-      .populate("recipe", "name ingredients"); // เลือกเฉพาะ field ที่จำเป็น
+      .populate("recipe", "name ingredients");
 
     const recipes = saved.map((doc) => doc.recipe).filter(Boolean);
 
@@ -105,7 +101,7 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 /* ------------------- DELETE ------------------- */
-router.delete("/:id", authMiddleware, async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
     const userId = getUserId(req);
     const { id } = req.params;
