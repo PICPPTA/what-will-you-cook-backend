@@ -1,3 +1,6 @@
+// models/User.js
+import mongoose from "mongoose";
+
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -7,6 +10,9 @@ const userSchema = new mongoose.Schema(
     // optional future fields
     avatar: { type: String, default: "" },
     bio: { type: String, default: "" },
+
+    // optional role (safe default)
+    role: { type: String, default: "user" },
   },
   { timestamps: true }
 );

@@ -7,20 +7,16 @@ import rateLimit from "express-rate-limit";
 
 const router = express.Router();
 
-/* ------------------- Rate Limit ------------------- */
 const saveLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   message: { message: "Too many save actions, please slow down." },
 });
 
-/* ------------------- Helpers ------------------- */
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-/* ------------------- Protect all routes ------------------- */
 router.use(requireAuth);
 
-/* ------------------- POST: Save Recipe ------------------- */
 router.post("/", saveLimiter, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -42,16 +38,11 @@ router.post("/", saveLimiter, async (req, res) => {
     return res.json({ message: "Recipe saved", savedId: saved._id });
   } catch (err) {
     console.error("Save recipe error:", err);
-
-    if (err?.code === 11000) {
-      return res.status(200).json({ message: "Already saved" });
-    }
-
+    if (err?.code === 11000) return res.status(200).json({ message: "Already saved" });
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------- POST: Toggle Save ------------------- */
 router.post("/:recipeId/toggle", saveLimiter, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -73,11 +64,7 @@ router.post("/:recipeId/toggle", saveLimiter, async (req, res) => {
 
     const created = await SavedRecipe.create({ user: userId, recipe: recipeId });
 
-    return res.json({
-      message: "Recipe saved",
-      saved: true,
-      savedId: created._id,
-    });
+    return res.json({ message: "Recipe saved", saved: true, savedId: created._id });
   } catch (err) {
     console.error("Toggle saved recipe error:", err);
 
@@ -86,19 +73,13 @@ router.post("/:recipeId/toggle", saveLimiter, async (req, res) => {
         user: req.user.id,
         recipe: req.params.recipeId,
       });
-
-      return res.json({
-        message: "Recipe saved",
-        saved: true,
-        savedId: doc?._id,
-      });
+      return res.json({ message: "Recipe saved", saved: true, savedId: doc?._id });
     }
 
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------- GET: All Saved Recipes ------------------- */
 router.get("/", async (req, res) => {
   try {
     const userId = req.user.id;
@@ -116,7 +97,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-/* ------------------- DELETE: Remove saved item by SavedRecipe _id ------------------- */
 router.delete("/:id", async (req, res) => {
   try {
     const userId = req.user.id;
