@@ -19,7 +19,7 @@ const SavedRecipeSchema = new mongoose.Schema(
   }
 );
 
-// ป้องกันการ save ซ้ำ (user, recipe คู่เดิม)
+// ป้องกันเซฟรายการเดิมซ้ำซ้อน เช่น user 1 บันทึก recipe 1 ซ้ำ
 SavedRecipeSchema.index({ user: 1, recipe: 1 }, { unique: true });
 
 const SavedRecipe = mongoose.model("SavedRecipe", SavedRecipeSchema);
