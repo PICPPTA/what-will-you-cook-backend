@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
+import cookieParser from "cookie-parser"; // ✅ ADD
 
 import authRoutes from "./routes/authRoutes.js";
 import protectedRoutes from "./routes/protectedRoutes.js";
@@ -21,6 +22,9 @@ if (!process.env.JWT_SECRET) {
 
 const app = express();
 
+// ✅ Recommended when deployed behind proxy (Render/Nginx/Cloud)
+app.set("trust proxy", 1);
+
 // Security Headers
 app.use(
   helmet({
@@ -33,6 +37,9 @@ app.disable("x-powered-by");
 
 // Anti-JSON attack
 app.use(express.json({ limit: "50kb" }));
+
+// ✅ ADD: Cookie Parser (required for cookie-based auth)
+app.use(cookieParser());
 
 // NoSQL injection protection
 app.use(mongoSanitize());
@@ -51,7 +58,7 @@ app.use(
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(null, false);
+      return cb(new Error("Not allowed by CORS")); // ✅ clearer than cb(null,false)
     },
     credentials: true,
   })
