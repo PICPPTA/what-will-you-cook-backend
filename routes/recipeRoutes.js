@@ -1,3 +1,4 @@
+// routes/recipeRoutes.js
 import express from "express";
 import mongoose from "mongoose";
 import Recipe from "../models/Recipe.js";
@@ -23,12 +24,12 @@ const ratingLimiter = rateLimit({
 const getUserId = (req) => req.user?.id;
 const isIdValid = (id) => mongoose.Types.ObjectId.isValid(id);
 
-// Route param regex: 24-hex ObjectId only
-const OID = "([a-fA-F0-9]{24})";
-
-/* ------------ Guard: if someone calls GET /search mistakenly ------------ */
-router.get("/search", (req, res) => {
-  return res.status(405).json({ message: "Use POST /api/recipes/search" });
+/* ------------ Guard: /search must be POST only ------------ */
+router.all("/search", (req, res, next) => {
+  if (req.method !== "POST") {
+    return res.status(405).json({ message: "Use POST /api/recipes/search" });
+  }
+  return next();
 });
 
 /* ------------ POST: Search Recipes ------------ */
@@ -39,7 +40,9 @@ router.post("/search", async (req, res) => {
     let selected = [];
 
     if (Array.isArray(ingredients)) {
-      selected = ingredients.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+      selected = ingredients
+        .map((s) => String(s).toLowerCase().trim())
+        .filter(Boolean);
     } else if (ingredientsText) {
       selected = String(ingredientsText)
         .split(",")
@@ -74,7 +77,7 @@ router.post("/search", async (req, res) => {
 });
 
 /* ------------ GET: Feedback ------------ */
-router.get(`/:id${OID}/feedback`, async (req, res) => {
+router.get("/:id([0-9a-fA-F]{24})/feedback", async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -99,7 +102,7 @@ router.get(`/:id${OID}/feedback`, async (req, res) => {
 });
 
 /* ------------ POST: Rate Recipe (Protected) ------------ */
-router.post(`/:id${OID}/rate`, requireAuth, ratingLimiter, async (req, res) => {
+router.post("/:id([0-9a-fA-F]{24})/rate", requireAuth, ratingLimiter, async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -156,45 +159,50 @@ router.post(`/:id${OID}/rate`, requireAuth, ratingLimiter, async (req, res) => {
 });
 
 /* ------------ POST: Add Comment (Protected) ------------ */
-router.post(`/:id${OID}/comments`, requireAuth, commentLimiter, async (req, res) => {
-  const { id } = req.params;
-  let { text } = req.body;
+router.post(
+  "/:id([0-9a-fA-F]{24})/comments",
+  requireAuth,
+  commentLimiter,
+  async (req, res) => {
+    const { id } = req.params;
+    let { text } = req.body;
 
-  if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
+    if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
-  if (!text || !String(text).trim()) {
-    return res.status(400).json({ message: "Comment text required" });
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ message: "Comment text required" });
+    }
+
+    // Basic sanitize (avoid raw tags)
+    text = String(text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    try {
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const recipe = await Recipe.findById(id);
+      if (!recipe) return res.status(404).json({ message: "Recipe not found" });
+
+      const comment = {
+        user: userId,
+        userName: req.user.name,
+        text,
+        createdAt: new Date(),
+      };
+
+      recipe.comments.push(comment);
+      await recipe.save();
+
+      return res.json({ message: "Comment added", comment });
+    } catch (err) {
+      console.error("Comment error:", err);
+      return res.status(500).json({ message: "Server error" });
+    }
   }
-
-  // Basic sanitize (avoid raw tags)
-  text = String(text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
-    const recipe = await Recipe.findById(id);
-    if (!recipe) return res.status(404).json({ message: "Recipe not found" });
-
-    const comment = {
-      user: userId,
-      userName: req.user.name,
-      text,
-      createdAt: new Date(),
-    };
-
-    recipe.comments.push(comment);
-    await recipe.save();
-
-    return res.json({ message: "Comment added", comment });
-  } catch (err) {
-    console.error("Comment error:", err);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
+);
 
 /* ------------ GET: Recipe by ID (keep last) ------------ */
-router.get(`/:id${OID}`, async (req, res) => {
+router.get("/:id([0-9a-fA-F]{24})", async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
