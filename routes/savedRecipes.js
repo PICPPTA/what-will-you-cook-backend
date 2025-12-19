@@ -86,6 +86,7 @@ router.post("/:recipeId/toggle", saveLimiter, async (req, res) => {
         user: req.user.id,
         recipe: req.params.recipeId,
       });
+
       return res.json({
         message: "Recipe saved",
         saved: true,
