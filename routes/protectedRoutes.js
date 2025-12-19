@@ -1,19 +1,20 @@
+// backend/routes/protectedRoutes.js
 import express from "express";
-import authMiddleware from "../middleware/authMiddleware.js";
+import requireAuth from "../middleware/requireAuth.js"; // ✅ change
 import User from "../models/User.js";
 import xss from "xss";
 
 const router = express.Router();
 
 // Protected test
-router.get("/", authMiddleware, (req, res) => {
+router.get("/", requireAuth, (req, res) => {
   res.json({ message: "Protected route", user: req.user });
 });
 
 // Profile
-router.get("/me", authMiddleware, async (req, res) => {
+router.get("/me", requireAuth, async (req, res) => {
   try {
-    const userId = req.user.id; // use only one key
+    const userId = req.user.id;
 
     const user = await User.findById(userId).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
