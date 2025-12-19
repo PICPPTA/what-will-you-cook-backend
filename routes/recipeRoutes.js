@@ -2,7 +2,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Recipe from "../models/Recipe.js";
-import authMiddleware from "../middleware/authMiddleware.js";
+import requireAuth from "../middleware/requireAuth.js"; // ✅ cookie-based auth
 import rateLimit from "express-rate-limit";
 
 const router = express.Router();
@@ -44,7 +44,7 @@ router.post("/search", async (req, res) => {
       return res.status(400).json({ message: "No ingredients provided" });
     }
 
-    // ป้องกัน misuse
+    // Prevent misuse
     if (selected.length > 30) {
       return res.status(400).json({ message: "Too many ingredients (max 30)" });
     }
@@ -65,8 +65,6 @@ router.post("/search", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
-
 
 /* ------------ GET: Feedback ------------ */
 router.get("/:id/feedback", async (req, res) => {
@@ -93,8 +91,8 @@ router.get("/:id/feedback", async (req, res) => {
   }
 });
 
-/* ------------ POST: Rate Recipe ------------ */
-router.post("/:id/rate", authMiddleware, ratingLimiter, async (req, res) => {
+/* ------------ POST: Rate Recipe (Protected) ------------ */
+router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -103,41 +101,46 @@ router.post("/:id/rate", authMiddleware, ratingLimiter, async (req, res) => {
     const value = Number(req.body.rating);
 
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
-    if (value < 1 || value > 5)
+    if (Number.isNaN(value) || value < 1 || value > 5) {
       return res.status(400).json({ message: "Rating must be 1–5" });
+    }
 
-    // ป้องกัน race condition ด้วย findOneAndUpdate + upsert
+    // If user already rated -> update
     const recipe = await Recipe.findOneAndUpdate(
       { _id: id, "ratings.user": userId },
       { $set: { "ratings.$.value": value } },
       { new: true }
     );
 
+    // If no existing rating -> push new rating
     if (!recipe) {
       const updated = await Recipe.findByIdAndUpdate(
         id,
         { $push: { ratings: { user: userId, value } } },
         { new: true }
       );
+
+      if (!updated) return res.status(404).json({ message: "Recipe not found" });
+
+      const avg =
+        updated.ratings.reduce((s, r) => s + r.value, 0) / updated.ratings.length;
+
       return res.json({
         message: "Rating saved",
         myRating: value,
-        avgRating:
-          updated.ratings.reduce((s, r) => s + r.value, 0) /
-          updated.ratings.length,
+        avgRating: avg,
         ratingCount: updated.ratings.length,
       });
     }
 
-    const ratings = recipe.ratings;
     const avgRating =
-      ratings.reduce((s, r) => s + r.value, 0) / ratings.length;
+      recipe.ratings.reduce((s, r) => s + r.value, 0) / recipe.ratings.length;
 
     res.json({
       message: "Rating saved",
       myRating: value,
       avgRating,
-      ratingCount: ratings.length,
+      ratingCount: recipe.ratings.length,
     });
   } catch (err) {
     console.error("Rate error:", err);
@@ -145,17 +148,18 @@ router.post("/:id/rate", authMiddleware, ratingLimiter, async (req, res) => {
   }
 });
 
-/* ------------ POST: Add Comment ------------ */
-router.post("/:id/comments", authMiddleware, commentLimiter, async (req, res) => {
+/* ------------ POST: Add Comment (Protected) ------------ */
+router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
   const { id } = req.params;
   let { text } = req.body;
 
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
-  if (!text || !text.trim())
+  if (!text || !text.trim()) {
     return res.status(400).json({ message: "Comment text required" });
+  }
 
-  // Sanitize text
+  // Basic sanitize (avoid raw tags)
   text = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   try {
@@ -182,7 +186,7 @@ router.post("/:id/comments", authMiddleware, commentLimiter, async (req, res) =>
   }
 });
 
-/* ------------ GET: Recipe by ID (วางท้ายสุด) ------------ */
+/* ------------ GET: Recipe by ID (keep last) ------------ */
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
