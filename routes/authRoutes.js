@@ -1,50 +1,3 @@
-// backend/routes/authRoutes.js
-import express from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import User from "../models/User.js";
-
-const router = express.Router();
-
-const INVALID_MSG = "Invalid email or password";
-
-// REGISTER
-router.post("/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password)
-      return res.status(400).json({ message: "Invalid registration data" });
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email))
-      return res.status(400).json({ message: "Invalid registration data" });
-
-    if (password.length < 6)
-      return res.status(400).json({ message: "Invalid registration data" });
-
-    const exists = await User.findOne({ email });
-
-    if (exists) {
-      return res
-        .status(400)
-        .json({ message: "Invalid registration data" }); // no email leak
-    }
-
-    const hashed = await bcrypt.hash(password, 12);
-
-    const user = await User.create({ name, email, password: hashed });
-
-    res.json({
-      message: "User registered successfully",
-      user: { id: user._id, name: user.name, email: user.email },
-    });
-  } catch (err) {
-    console.error("Register error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
 // LOGIN
 router.post("/login", async (req, res) => {
   try {
@@ -69,9 +22,17 @@ router.post("/login", async (req, res) => {
       { expiresIn: "1d" }
     );
 
+    // ✅ FIX: set httpOnly cookie (Production-safe)
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+
+    // ❌ no token in JSON anymore
     res.json({
       message: "Login successful",
-      token,
       user: { id: user._id, name: user.name, email: user.email },
     });
   } catch (err) {
@@ -79,5 +40,3 @@ router.post("/login", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-export default router;
