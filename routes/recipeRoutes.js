@@ -1,8 +1,7 @@
-// backend/routes/recipeRoutes.js
 import express from "express";
 import mongoose from "mongoose";
 import Recipe from "../models/Recipe.js";
-import requireAuth from "../middleware/requireAuth.js"; // ✅ cookie-based auth
+import requireAuth from "../middleware/requireAuth.js"; // cookie-based auth
 import rateLimit from "express-rate-limit";
 
 const router = express.Router();
@@ -20,9 +19,17 @@ const ratingLimiter = rateLimit({
   message: { message: "Slow down rating requests." },
 });
 
-/* ------------ Helper ------------ */
+/* ------------ Helpers ------------ */
 const getUserId = (req) => req.user?.id;
 const isIdValid = (id) => mongoose.Types.ObjectId.isValid(id);
+
+// Route param regex: 24-hex ObjectId only
+const OID = "([a-fA-F0-9]{24})";
+
+/* ------------ Guard: if someone calls GET /search mistakenly ------------ */
+router.get("/search", (req, res) => {
+  return res.status(405).json({ message: "Use POST /api/recipes/search" });
+});
 
 /* ------------ POST: Search Recipes ------------ */
 router.post("/search", async (req, res) => {
@@ -32,9 +39,9 @@ router.post("/search", async (req, res) => {
     let selected = [];
 
     if (Array.isArray(ingredients)) {
-      selected = ingredients.map((s) => s.toLowerCase().trim()).filter(Boolean);
+      selected = ingredients.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
     } else if (ingredientsText) {
-      selected = ingredientsText
+      selected = String(ingredientsText)
         .split(",")
         .map((s) => s.toLowerCase().trim())
         .filter(Boolean);
@@ -56,18 +63,18 @@ router.post("/search", async (req, res) => {
 
     const recipes = await Recipe.find(query).select("name ingredients imageUrl");
 
-    res.json({
+    return res.json({
       matchedCount: recipes.length,
       recipes,
     });
   } catch (err) {
     console.error("Search error:", err);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ------------ GET: Feedback ------------ */
-router.get("/:id/feedback", async (req, res) => {
+router.get(`/:id${OID}/feedback`, async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -84,15 +91,15 @@ router.get("/:id/feedback", async (req, res) => {
         ? 0
         : ratings.reduce((sum, r) => sum + r.value, 0) / ratingCount;
 
-    res.json({ avgRating, ratingCount, comments });
+    return res.json({ avgRating, ratingCount, comments });
   } catch (err) {
     console.error("Feedback error:", err);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ------------ POST: Rate Recipe (Protected) ------------ */
-router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
+router.post(`/:id${OID}/rate`, requireAuth, ratingLimiter, async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -136,7 +143,7 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
     const avgRating =
       recipe.ratings.reduce((s, r) => s + r.value, 0) / recipe.ratings.length;
 
-    res.json({
+    return res.json({
       message: "Rating saved",
       myRating: value,
       avgRating,
@@ -144,23 +151,23 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error("Rate error:", err);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ------------ POST: Add Comment (Protected) ------------ */
-router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
+router.post(`/:id${OID}/comments`, requireAuth, commentLimiter, async (req, res) => {
   const { id } = req.params;
   let { text } = req.body;
 
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
-  if (!text || !text.trim()) {
+  if (!text || !String(text).trim()) {
     return res.status(400).json({ message: "Comment text required" });
   }
 
   // Basic sanitize (avoid raw tags)
-  text = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  text = String(text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   try {
     const userId = getUserId(req);
@@ -179,15 +186,15 @@ router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
     recipe.comments.push(comment);
     await recipe.save();
 
-    res.json({ message: "Comment added", comment });
+    return res.json({ message: "Comment added", comment });
   } catch (err) {
     console.error("Comment error:", err);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ------------ GET: Recipe by ID (keep last) ------------ */
-router.get("/:id", async (req, res) => {
+router.get(`/:id${OID}`, async (req, res) => {
   const { id } = req.params;
   if (!isIdValid(id)) return res.status(400).json({ message: "Invalid id" });
 
@@ -195,10 +202,10 @@ router.get("/:id", async (req, res) => {
     const recipe = await Recipe.findById(id);
     if (!recipe) return res.status(404).json({ message: "Recipe not found" });
 
-    res.json(recipe);
+    return res.json(recipe);
   } catch (err) {
-    console.error("Get recipe error:", err);
-    res.status(500).json({ message: "Server error" });
+    console.error("Get recipe by id error:", err);
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
