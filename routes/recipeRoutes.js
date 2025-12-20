@@ -1,3 +1,4 @@
+// backend/routes/recipeRoutes.js
 import express from "express";
 import mongoose from "mongoose";
 import Recipe from "../models/Recipe.js";
@@ -10,12 +11,16 @@ const router = express.Router();
 const commentLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { message: "Too many requests, please try again later." },
 });
 
 const ratingLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { message: "Slow down rating requests." },
 });
 
@@ -67,10 +72,30 @@ router.post("/search", async (req, res) => {
         : { ingredients: { $in: selected } };
 
     const recipes = await Recipe.find(query).select("name ingredients imageUrl");
-
     return res.json({ matchedCount: recipes.length, recipes });
   } catch (err) {
     console.error("Search error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ------------------------------------------------------
+   ✅ NEW) GET: My Shared Recipes (Protected)
+   - วางไว้ก่อน :id เพื่อไม่ให้ "/my" ไปชน "/:id"
+   - ใช้ field ตาม schema ของคุณ: createdBy
+------------------------------------------------------ */
+router.get("/my", requireAuth, async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    const recipes = await Recipe.find({ createdBy: userId })
+      .sort({ createdAt: -1 })
+      .select("name ingredients imageUrl description steps createdAt");
+
+    return res.json(recipes);
+  } catch (err) {
+    console.error("Get my recipes error:", err);
     return res.status(500).json({ message: "Server error" });
   }
 });
@@ -81,6 +106,10 @@ router.post("/search", async (req, res) => {
 router.param("id", (req, res, next, id) => {
   if (id === "search") {
     return res.status(405).json({ message: "Use POST /api/recipes/search" });
+  }
+  if (id === "my") {
+    // ปกติไม่ควรเข้ามาเพราะเราวาง /my ไว้ก่อนแล้ว แต่กันไว้เผื่อ reorder ภายหลัง
+    return res.status(404).json({ message: "Not found" });
   }
   if (!isObjectId(id)) {
     return res.status(400).json({ message: "Invalid id" });
@@ -142,7 +171,8 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
       if (!updated) return res.status(404).json({ message: "Recipe not found" });
 
       const avg =
-        updated.ratings.reduce((s, r) => s + r.value, 0) / updated.ratings.length;
+        updated.ratings.reduce((s, r) => s + r.value, 0) /
+        updated.ratings.length;
 
       return res.json({
         message: "Rating saved",
