@@ -22,11 +22,7 @@ if (!process.env.JWT_SECRET) {
 
 const app = express();
 
-/**
- * ✅ IMPORTANT (Render/Nginx/Cloudflare/etc.)
- * Must be set BEFORE using express-rate-limit
- * so it can read X-Forwarded-For correctly.
- */
+// ✅ Render/Proxy (แก้ express-rate-limit + X-Forwarded-For)
 app.set("trust proxy", 1);
 
 // Security Headers
@@ -42,8 +38,20 @@ app.disable("x-powered-by");
 // Body limit
 app.use(express.json({ limit: "50kb" }));
 
-// Cookies (required for cookie-based auth)
+// ✅ Cookie Parser (required for cookie-based auth)
 app.use(cookieParser());
+
+// ✅ FIX: Express 5 ทำ req.query เป็น getter (เขียนทับไม่ได้)
+// express-mongo-sanitize พยายาม set req.query = ... เลยพัง
+app.use((req, res, next) => {
+  Object.defineProperty(req, "query", {
+    value: { ...req.query }, // clone เป็น object ปกติ
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  next();
+});
 
 // NoSQL injection protection
 app.use(mongoSanitize());
@@ -60,33 +68,29 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // allow server-to-server / curl
+      if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS"));
+      return cb(null, false);
     },
     credentials: true,
   })
 );
 
-/* ------------------- Rate Limits (AFTER trust proxy) ------------------- */
+// Global Rate Limit
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
   })
 );
 
+// Auth Rate Limit
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   message: { message: "Too many auth requests" },
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 
-/* ------------------- Routes ------------------- */
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/protected", protectedRoutes);
 app.use("/api/recipes", recipeRoutes);
