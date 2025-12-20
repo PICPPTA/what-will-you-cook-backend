@@ -1,4 +1,3 @@
-// routes/recipeRoutes.js
 import express from "express";
 import mongoose from "mongoose";
 import Recipe from "../models/Recipe.js";
@@ -25,7 +24,7 @@ const getUserId = (req) => req.user?.id;
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /* ------------------------------------------------------
-   1) Guard /search: ต้องเป็น POST เท่านั้น (กันคนยิง GET)
+   A) Guard /search: ให้ใช้ POST เท่านั้น (กัน GET ไปชน :id)
 ------------------------------------------------------ */
 router.all("/search", (req, res, next) => {
   if (req.method !== "POST") {
@@ -35,7 +34,7 @@ router.all("/search", (req, res, next) => {
 });
 
 /* ------------------------------------------------------
-   2) Search (POST) — วางไว้ก่อน route ที่มี :id เสมอ
+   B) Search (POST) — ต้องอยู่ก่อน route ที่เป็น :id
 ------------------------------------------------------ */
 router.post("/search", async (req, res) => {
   try {
@@ -68,6 +67,7 @@ router.post("/search", async (req, res) => {
         : { ingredients: { $in: selected } };
 
     const recipes = await Recipe.find(query).select("name ingredients imageUrl");
+
     return res.json({ matchedCount: recipes.length, recipes });
   } catch (err) {
     console.error("Search error:", err);
@@ -76,21 +76,15 @@ router.post("/search", async (req, res) => {
 });
 
 /* ------------------------------------------------------
-   3) Param validator: กัน id ที่ไม่ใช่ ObjectId ก่อนเข้าทุก route ที่ใช้ :id
-   - ต่อให้มีคนยิง GET /api/recipes/search แล้วมันเผลอชน :id
-     ตัวนี้จะหยุดก่อนถึง findById ทำให้ CastError หายชัวร์
+   C) Param validator: กัน id ที่ไม่ใช่ ObjectId (กัน CastError ชัวร์)
 ------------------------------------------------------ */
 router.param("id", (req, res, next, id) => {
-  // ถ้า id เป็นคำที่มักชน route เช่น search -> บอกให้ใช้ endpoint ที่ถูก
   if (id === "search") {
     return res.status(405).json({ message: "Use POST /api/recipes/search" });
   }
-
   if (!isObjectId(id)) {
-    // เลือก 400 หรือ 404 ได้; แนะนำ 400 เพื่อบอกว่า format ผิด
     return res.status(400).json({ message: "Invalid id" });
   }
-
   return next();
 });
 
@@ -131,12 +125,14 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
       return res.status(400).json({ message: "Rating must be 1–5" });
     }
 
+    // เคยให้คะแนนแล้ว -> update
     const recipe = await Recipe.findOneAndUpdate(
       { _id: id, "ratings.user": userId },
       { $set: { "ratings.$.value": value } },
       { new: true }
     );
 
+    // ยังไม่เคยให้คะแนน -> push
     if (!recipe) {
       const updated = await Recipe.findByIdAndUpdate(
         id,
@@ -180,6 +176,7 @@ router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
     return res.status(400).json({ message: "Comment text required" });
   }
 
+  // basic sanitize (กันแท็กดิบ)
   text = String(text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   try {
@@ -213,6 +210,7 @@ router.get("/:id", async (req, res) => {
   try {
     const recipe = await Recipe.findById(id);
     if (!recipe) return res.status(404).json({ message: "Recipe not found" });
+
     return res.json(recipe);
   } catch (err) {
     console.error("Get recipe by id error:", err);
