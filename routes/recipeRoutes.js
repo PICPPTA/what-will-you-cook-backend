@@ -29,10 +29,11 @@ const getUserId = (req) => req.user?.id;
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /* ------------------------------------------------------
-   ✅ NEW) Version probe (must be BEFORE any /:id routes)
+   ✅ Version probe (MUST be BEFORE any /:id routes)
 ------------------------------------------------------ */
 router.get("/__version", (req, res) => {
   return res.json({
+    ok: true,
     service: "recipes",
     version: "2025-12-20-v1",
     ts: new Date().toISOString(),
@@ -50,13 +51,14 @@ router.all("/search", (req, res, next) => {
 });
 
 /* ------------------------------------------------------
-   B) Search (POST) — before any /:id routes
+   B) Search (POST) — MUST be BEFORE /:id routes
 ------------------------------------------------------ */
 router.post("/search", async (req, res) => {
   try {
     let { ingredients, ingredientsText, matchMode } = req.body;
 
     let selected = [];
+
     if (Array.isArray(ingredients)) {
       selected = ingredients
         .map((s) => String(s).toLowerCase().trim())
@@ -71,6 +73,7 @@ router.post("/search", async (req, res) => {
     if (selected.length === 0) {
       return res.status(400).json({ message: "No ingredients provided" });
     }
+
     if (selected.length > 30) {
       return res.status(400).json({ message: "Too many ingredients (max 30)" });
     }
@@ -81,6 +84,7 @@ router.post("/search", async (req, res) => {
         : { ingredients: { $in: selected } };
 
     const recipes = await Recipe.find(query).select("name ingredients imageUrl");
+
     return res.json({ matchedCount: recipes.length, recipes });
   } catch (err) {
     console.error("Search error:", err);
@@ -90,7 +94,8 @@ router.post("/search", async (req, res) => {
 
 /* ------------------------------------------------------
    ✅ GET: My Shared Recipes (Protected)
-   - MUST be BEFORE /:id
+   - MUST be BEFORE /:id routes
+   - ใช้ field ตาม schema: createdBy
 ------------------------------------------------------ */
 router.get("/my", requireAuth, async (req, res) => {
   try {
@@ -109,16 +114,19 @@ router.get("/my", requireAuth, async (req, res) => {
 });
 
 /* ------------------------------------------------------
-   C) Param validator (only applies to routes with :id)
+   C) Param validator (applies ONLY when :id route matched)
 ------------------------------------------------------ */
 router.param("id", (req, res, next, id) => {
-  // กัน keyword ที่ไม่ควรวิ่งเข้ามาเป็น :id
-  if (id === "search" || id === "my" || id === "__version") {
+  // กัน keyword เผื่อมีคนยิงแปลก ๆ หรือมีการ reorder ในอนาคต
+  const reserved = new Set(["search", "my", "__version", "feedback", "rate", "comments"]);
+  if (reserved.has(id)) {
     return res.status(404).json({ message: "Not found" });
   }
+
   if (!isObjectId(id)) {
     return res.status(400).json({ message: "Invalid id" });
   }
+
   return next();
 });
 
@@ -159,12 +167,14 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
       return res.status(400).json({ message: "Rating must be 1–5" });
     }
 
+    // เคยให้คะแนนแล้ว -> update
     const recipe = await Recipe.findOneAndUpdate(
       { _id: id, "ratings.user": userId },
       { $set: { "ratings.$.value": value } },
       { new: true }
     );
 
+    // ยังไม่เคยให้คะแนน -> push
     if (!recipe) {
       const updated = await Recipe.findByIdAndUpdate(
         id,
@@ -208,6 +218,7 @@ router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
     return res.status(400).json({ message: "Comment text required" });
   }
 
+  // basic sanitize (กันแท็กดิบ)
   text = String(text).replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   try {
