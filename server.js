@@ -57,7 +57,11 @@ app.use((req, res, next) => {
 app.use(mongoSanitize());
 mongoose.set("strictQuery", true);
 
-// CORS
+/* =========================
+   ✅ CORS (Fix Preflight)
+   - ต้องมี OPTIONS + methods + allowedHeaders
+   - ต้องตอบ app.options("*", cors(...)) ก่อน routes
+========================= */
 const FRONTEND_RENDER = "https://what-will-you-cook-frontend.onrender.com";
 const allowedOrigins = [
   "http://localhost:3000",
@@ -65,22 +69,31 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: (origin, cb) => {
+    // allow tools/curl ที่ไม่มี Origin
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"), false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
+};
 
-// Global Rate Limit
+app.use(cors(corsOptions));
+// ✅ สำคัญ: ตอบ preflight ทุก path
+app.options("*", cors(corsOptions));
+
+/* =========================
+   ✅ Rate Limit (skip OPTIONS)
+========================= */
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 200,
+    skip: (req) => req.method === "OPTIONS",
   })
 );
 
@@ -89,8 +102,12 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   message: { message: "Too many auth requests" },
+  skip: (req) => req.method === "OPTIONS",
 });
 
+/* =========================
+   Routes
+========================= */
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/protected", protectedRoutes);
 app.use("/api/recipes", recipeRoutes);
