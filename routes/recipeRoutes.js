@@ -28,16 +28,92 @@ const ratingLimiter = rateLimit({
 const getUserId = (req) => req.user?.id;
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
+const parseIngredients = (ingredients, ingredientsText) => {
+  // รองรับ:
+  // - ingredients: array (["egg","pork"])
+  // - ingredients: string ("egg,pork")
+  // - ingredientsText: string ("egg,pork")
+  let selected = [];
+
+  if (Array.isArray(ingredients)) {
+    selected = ingredients
+      .map((s) => String(s).toLowerCase().trim())
+      .filter(Boolean);
+  } else if (typeof ingredients === "string" && ingredients.trim()) {
+    selected = ingredients
+      .split(",")
+      .map((s) => s.toLowerCase().trim())
+      .filter(Boolean);
+  } else if (ingredientsText) {
+    selected = String(ingredientsText)
+      .split(",")
+      .map((s) => s.toLowerCase().trim())
+      .filter(Boolean);
+  }
+
+  // de-dup
+  selected = [...new Set(selected)];
+  return selected;
+};
+
 /* ------------------------------------------------------
-   ✅ Version probe (MUST be BEFORE any /:id routes)
+   ✅ Version probe (must be BEFORE any /:id routes)
 ------------------------------------------------------ */
 router.get("/__version", (req, res) => {
   return res.json({
     ok: true,
     service: "recipes",
-    version: "2025-12-20-v1",
+    version: "2025-12-21-v2",
     ts: new Date().toISOString(),
   });
+});
+
+/* ------------------------------------------------------
+   ✅ POST: Create Recipe (Protected) -> POST /api/recipes
+   - ใช้ cookie auth (requireAuth)
+   - เซ็ต createdBy เพื่อให้ GET /my ทำงาน
+------------------------------------------------------ */
+router.post("/", requireAuth, async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    let {
+      name,
+      description,
+      ingredients,
+      ingredientsText,
+      steps,
+      cookingTime,
+      imageUrl,
+    } = req.body || {};
+
+    name = String(name || "").trim();
+    if (!name) return res.status(400).json({ message: "Recipe name is required" });
+
+    const ingArr = parseIngredients(ingredients, ingredientsText);
+    if (ingArr.length === 0) {
+      return res.status(400).json({ message: "Ingredients are required" });
+    }
+    if (ingArr.length > 30) {
+      return res.status(400).json({ message: "Too many ingredients (max 30)" });
+    }
+
+    const doc = await Recipe.create({
+      name,
+      description: String(description || "").trim(),
+      ingredients: ingArr,
+      steps: String(steps || "").trim(),
+      cookingTime: cookingTime ? Number(cookingTime) : undefined,
+      imageUrl: imageUrl ? String(imageUrl).trim() : undefined,
+      createdBy: userId,
+    });
+
+    return res.status(201).json({ message: "Recipe created", recipe: doc });
+  } catch (err) {
+    console.error("Create recipe error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
 });
 
 /* ------------------------------------------------------
@@ -51,29 +127,16 @@ router.all("/search", (req, res, next) => {
 });
 
 /* ------------------------------------------------------
-   B) Search (POST) — MUST be BEFORE /:id routes
+   B) Search (POST) — before any /:id routes
 ------------------------------------------------------ */
 router.post("/search", async (req, res) => {
   try {
-    let { ingredients, ingredientsText, matchMode } = req.body;
-
-    let selected = [];
-
-    if (Array.isArray(ingredients)) {
-      selected = ingredients
-        .map((s) => String(s).toLowerCase().trim())
-        .filter(Boolean);
-    } else if (ingredientsText) {
-      selected = String(ingredientsText)
-        .split(",")
-        .map((s) => s.toLowerCase().trim())
-        .filter(Boolean);
-    }
+    const { ingredients, ingredientsText, matchMode } = req.body || {};
+    const selected = parseIngredients(ingredients, ingredientsText);
 
     if (selected.length === 0) {
       return res.status(400).json({ message: "No ingredients provided" });
     }
-
     if (selected.length > 30) {
       return res.status(400).json({ message: "Too many ingredients (max 30)" });
     }
@@ -84,7 +147,6 @@ router.post("/search", async (req, res) => {
         : { ingredients: { $in: selected } };
 
     const recipes = await Recipe.find(query).select("name ingredients imageUrl");
-
     return res.json({ matchedCount: recipes.length, recipes });
   } catch (err) {
     console.error("Search error:", err);
@@ -93,9 +155,7 @@ router.post("/search", async (req, res) => {
 });
 
 /* ------------------------------------------------------
-   ✅ GET: My Shared Recipes (Protected)
-   - MUST be BEFORE /:id routes
-   - ใช้ field ตาม schema: createdBy
+   ✅ GET: My Shared Recipes (Protected) — before /:id
 ------------------------------------------------------ */
 router.get("/my", requireAuth, async (req, res) => {
   try {
@@ -104,7 +164,7 @@ router.get("/my", requireAuth, async (req, res) => {
 
     const recipes = await Recipe.find({ createdBy: userId })
       .sort({ createdAt: -1 })
-      .select("name ingredients imageUrl description steps createdAt");
+      .select("name ingredients imageUrl description steps cookingTime createdAt");
 
     return res.json(recipes);
   } catch (err) {
@@ -114,11 +174,18 @@ router.get("/my", requireAuth, async (req, res) => {
 });
 
 /* ------------------------------------------------------
-   C) Param validator (applies ONLY when :id route matched)
+   C) Param validator (only for routes that include :id)
 ------------------------------------------------------ */
 router.param("id", (req, res, next, id) => {
-  // กัน keyword เผื่อมีคนยิงแปลก ๆ หรือมีการ reorder ในอนาคต
-  const reserved = new Set(["search", "my", "__version", "feedback", "rate", "comments"]);
+  // กัน keyword ที่ไม่ควรถูกมองเป็น :id
+  const reserved = new Set([
+    "search",
+    "my",
+    "__version",
+    "feedback",
+    "rate",
+    "comments",
+  ]);
   if (reserved.has(id)) {
     return res.status(404).json({ message: "Not found" });
   }
@@ -160,7 +227,7 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
 
   try {
     const userId = getUserId(req);
-    const value = Number(req.body.rating);
+    const value = Number(req.body?.rating);
 
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
     if (Number.isNaN(value) || value < 1 || value > 5) {
@@ -212,7 +279,7 @@ router.post("/:id/rate", requireAuth, ratingLimiter, async (req, res) => {
 /* ------------ POST: Add Comment (Protected) ------------ */
 router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
   const { id } = req.params;
-  let { text } = req.body;
+  let { text } = req.body || {};
 
   if (!text || !String(text).trim()) {
     return res.status(400).json({ message: "Comment text required" });
@@ -230,7 +297,7 @@ router.post("/:id/comments", requireAuth, commentLimiter, async (req, res) => {
 
     const comment = {
       user: userId,
-      userName: req.user.name,
+      userName: req.user?.name,
       text,
       createdAt: new Date(),
     };
